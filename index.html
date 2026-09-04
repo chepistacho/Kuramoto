@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kuramoto · 8 osciladores</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="rack">
+
+  <header class="rack__header">
+    <div>
+      <p class="eyebrow">Modelo de Kuramoto</p>
+      <h1>8 osciladores acoplados</h1>
+    </div>
+    <div class="header-readout mono">
+      sincronía r = <b id="rValue">0.00</b>
+    </div>
+  </header>
+
+  <div class="stage-wrap">
+    <div id="canvas-holder"></div>
+  </div>
+
+  <div class="panel">
+
+    <div class="panel-row">
+      <button id="playBtn" aria-pressed="true">❚❚ Pausar</button>
+      <div class="k-control">
+        <label for="kSlider" class="mono">ACOPLAMIENTO K</label>
+        <input type="range" id="kSlider" min="0" max="6" step="0.05" value="1.4">
+        <span id="kValue" class="mono">1.40</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="randPhaseBtn">Aleatorizar fases</button>
+      <button id="randBpmBtn">Aleatorizar tempos</button>
+      <button id="resetBtn">Reiniciar</button>
+    </div>
+
+    <div id="oscGrid" class="osc-grid mono"></div>
+
+  </div>
+
+  <footer class="rack__footer">
+    Cada uno de los 8 módulos late a su propio tempo (BPM). Con <code>K</code> en 0 laten
+    por su cuenta; al subirlo empiezan a arrastrarse unos a otros hasta caer en fase. El
+    hilo entre módulos se ilumina cuando dos fases coinciden, y el brazo del centro (r)
+    crece a medida que el conjunto se sincroniza.
+    <span class="eq mono">dθᵢ/dt = ωᵢ + (K/N) · Σⱼ sin(θⱼ − θᵢ)</span>
+  </footer>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/addons/p5.sound.min.js"></script>
+<script src="sketch.js"></script>
+</body>
+</html>

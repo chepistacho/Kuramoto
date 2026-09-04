@@ -1,440 +1,547 @@
-/* ================================================================
-   MODELO DE KURAMOTO — 8 osciladores
-   ----------------------------------------------------------------
-   Cada oscilador i tiene una fase θᵢ que avanza según:
+/* =========================================================================
+   ECOSISTEMA KURAMOTO — p5.js (WEBGL)
+   ------------------------------------------------------------------------- */
+p5.disableFriendlyErrors = true;
 
-       dθᵢ/dt = ωᵢ + (K/N) · Σⱼ sin(θⱼ − θᵢ)
+const N = 8;
+const TIME_SCALE = 1.0;
+const ORBIT_RADIUS = 230;
+const CHAOS_EXTENT = 360;
 
-   ωᵢ  → frecuencia natural del oscilador i (viene de su BPM)
-   K   → fuerza de acoplamiento (0 = independientes, alto = se
-         arrastran entre sí hasta sincronizarse)
-   N   → número de osciladores (8 en este proyecto)
+const PERSONALIDADES = {
+  1: { nombre: 'bajo',  color: [70, 120, 255],  omegaRango: [0.55, 0.72], size: 34, hitR: 58 },
+  2: { nombre: 'pad',   color: [110, 240, 205], omegaRango: [0.60, 0.80], size: 27, hitR: 46 },
+  3: { nombre: 'hihat', color: [225, 250, 255], omegaRango: [1.32, 1.70], size: 11, hitR: 30 },
+  4: { nombre: 'synth', color: [175, 145, 255], omegaRango: [0.92, 1.22], size: 23, hitR: 42 }
+};
 
-   Cada vez que θᵢ completa una vuelta completa (2π) se considera
-   que el oscilador i tocó un "beat": ese es el gancho donde se
-   conecta el audio (ver preload() más abajo) y, más adelante,
-   cualquier comportamiento visual adicional.
+const ESCALA_PAD   = [196.00, 220.00, 233.08, 261.63];
+const ESCALA_SYNTH = [392.00, 440.00, 466.16, 523.25, 587.33];
+const RAICES_BAJO  = [55.00, 61.74];
 
-   Por ahora los 8 cuerpos están QUIETOS en el espacio: ocupan una
-   posición fija en el anillo y sólo gira su fase interna (el punto
-   que orbita dentro de cada módulo). El movimiento en pantalla es
-   apenas ese giro y el destello de cada beat.
+let agents = [];
+let K = 1.6;
+let r = 0, psi = 0, rSmooth = 0;
+let camAngle = 0;
+let heldAgent = null;
+let audioReady = false;
+let masterReverb;
+let particulas = [];
+let kSlider, kReadout, rValueEl;
 
-   Cada oscilador tiene además un MODO de reproducción, elegible
-   desde su propia tarjeta de control:
-     - "un golpe"  → dispara el sonido desde el inicio en cada beat
-                     (ideal para percusión: drums, snare, hi-hat...)
-     - "sostenido" → si el sonido ya está sonando cuando cae un
-                     nuevo beat, lo deja continuar tal cual (no lo
-                     corta ni lo reinicia); sólo dispara una nueva
-                     nota cuando la anterior ya terminó por su cuenta
-                     (ideal para lo melódico: cuerdas, synth, pad...)
-   ================================================================ */
+class Agente {
+  constructor(indice, personalidad, subIndice) {
+    this.i = indice;
+    this.personalidad = personalidad;
+    const cfg = PERSONALIDADES[personalidad];
+    this.cfg = cfg;
 
-const NUM_OSC = 8;
+    const [wLo, wHi] = cfg.omegaRango;
+    this.baseOmega = lerp(wLo, wHi, subIndice === 0 ? 0.12 : 0.88) + random(-0.03, 0.03);
+    this.theta = random(TWO_PI);
+    this.cicloPrevio = floor(this.theta / TWO_PI);
 
-// Nombre de cada oscilador — se usa en su etiqueta y en la grilla de controles
-const oscNames = ['DRUMS', 'CUERDAS', 'SYNTH', 'BASS', 'SNARE', 'HI-HAT', 'PAD', 'EFECTOS'];
+    this.shocked = false;
+    this.shockMult = 1;
+    this.shockNoiseAmp = 0;
+    this.ruidoT = random(1000);
 
-// Modo de reproducción por defecto de cada oscilador: 'oneshot' o 'sustain'
-// (se puede cambiar en vivo desde el botón de cada tarjeta)
-const defaultModes = ['oneshot', 'sustain', 'sustain', 'oneshot', 'oneshot', 'oneshot', 'sustain', 'oneshot'];
+    this.chaosSeed = createVector(random(1000), random(1000), random(1000));
+    this.wobbleSeed = random(1000);
+    this.pos = createVector();
+    this.sx = 0; this.sy = 0;
 
-// Tempos iniciales (BPM), ligeramente distintos entre sí para que
-// el desfase / la sincronización se note con claridad.
-const defaultBPM = [118, 124, 116, 121, 126, 113, 120, 128];
+    this.polarY = N > 1 ? 1 - (indice / (N - 1)) * 2 : 0;
+    this.radioXZ = sqrt(max(0, 1 - this.polarY * this.polarY));
 
-let oscillators = [];
-let K = 1.4;
-let playing = true;
+    this.pulso = 0;
+    this.rotX = random(TWO_PI); this.rotY = random(TWO_PI); this.rotZ = 0;
+    this.spin = random(TWO_PI);
+    this.respireOffX = random(TWO_PI);
+    this.respireOffY = random(TWO_PI);
+    this.respireOffZ = random(TWO_PI);
 
-let cnv;
-let centerX, centerY, ringRadius, bodyRadius, markerRadius;
-let rReadout;
+    this.ondas = []; // Aquí guardamos los anillos de energía que suelta en cada ciclo
+    this.crearVoz(subIndice);
+  }
 
-// Paleta (definida como arreglos [r,g,b] para usar con fill()/stroke() vía spread)
-const COL_BG_DEEP     = [10, 12, 16];
-const COL_PANEL       = [20, 23, 29];
-const COL_LINE_DIM    = [38, 43, 52];
-const COL_TEXT_DIM    = [125, 131, 141];
-const COL_TEXT_PRIM   = [237, 234, 226];
-const COL_AMBER       = [255, 154, 68];
-const COL_CYAN        = [89, 227, 201];
+  crearVoz(subIndice) {
+    if (typeof p5.Oscillator === 'undefined') return;
 
-
-/* ================================================================
-   ESPACIO PARA TUS SONIDOS
-   ----------------------------------------------------------------
-   Cada oscilador (0 a 7) puede disparar su propio sonido cada vez
-   que completa una oscilación (un "beat"). Para conectarlos:
-
-     1. Crea una carpeta "sounds" junto a este archivo .html
-     2. Copia ahí tus archivos de audio (.mp3, .wav, .ogg)
-     3. Descomenta y ajusta las líneas de abajo, una por oscilador
-
-   Ejemplo:
-     sounds[0] = loadSound('sounds/drums.mp3');
-     sounds[1] = loadSound('sounds/cuerdas.mp3');
-
-   Si no cargas nada, el proyecto sigue funcionando igual: cada beat
-   se sigue viendo (el destello del módulo), simplemente no suena.
-   ================================================================ */
-
-let sounds = new Array(NUM_OSC).fill(null);
-
-function preload(){
-  // sounds[0] = loadSound('sounds/drums.mp3');
-  // sounds[1] = loadSound('sounds/cuerdas.mp3');
-  // sounds[2] = loadSound('sounds/synth.mp3');
-  // sounds[3] = loadSound('sounds/bass.mp3');
-  // sounds[4] = loadSound('sounds/snare.mp3');
-  // sounds[5] = loadSound('sounds/hihat.mp3');
-  // sounds[6] = loadSound('sounds/pad.mp3');
-  // sounds[7] = loadSound('sounds/efectos.mp3');
-}
-
-// Decide cómo suena cada beat según el modo del oscilador:
-//   'oneshot'  → siempre reinicia el sonido desde cero (percusión)
-//   'sustain'  → sólo dispara si el sonido anterior ya terminó;
-//                si sigue sonando, lo deja tal cual (nada de cortes
-//                ni reinicios abruptos)
-function triggerSound(i){
-  const s = sounds[i];
-  if (!s) return;
-
-  if (oscillators[i].mode === 'sustain'){
-    if (!s.isPlaying()){
-      s.play();
+    if (this.personalidad === 1) {
+      this.raiz = RAICES_BAJO[subIndice % RAICES_BAJO.length];
+      this.osc = new p5.Oscillator('sine');
+      this.osc.amp(0);
+      this.osc.start();
+      this.env = new p5.Envelope();
+      this.env.setADSR(0.001, 0.22, 0, 0.04);
+      this.env.setRange(0.85, 0);
+    } else if (this.personalidad === 2) {
+      this.osc = new p5.Oscillator('sine');
+      this.osc2 = new p5.Oscillator('triangle');
+      this.osc.amp(0); this.osc2.amp(0);
+      this.osc.start(); this.osc2.start();
+      this.env = new p5.Envelope();
+      this.env.setADSR(0.9, 0.35, 0.35, 1.6);
+      this.env.setRange(0.16, 0);
+      if (masterReverb) {
+        this.osc.disconnect(); this.osc2.disconnect();
+        masterReverb.process(this.osc, 2.4, 2.2);
+        masterReverb.process(this.osc2, 2.4, 2.2);
+      }
+    } else if (this.personalidad === 3) {
+      this.hatNoise = new p5.Noise('white');
+      this.hatNoise.amp(0);
+      this.hatNoise.start();
+      this.filtro = new p5.HighPass();
+      this.filtro.freq(7000);
+      this.filtro.res(6);
+      this.hatNoise.disconnect();
+      this.hatNoise.connect(this.filtro);
+      this.env = new p5.Envelope();
+      this.env.setADSR(0.001, 0.045, 0, 0.02);
+      this.env.setRange(0.16, 0);
+    } else if (this.personalidad === 4) {
+      this.osc = new p5.Oscillator('sawtooth');
+      this.osc.amp(0);
+      this.osc.start();
+      this.filtro = new p5.LowPass();
+      this.filtro.freq(2200);
+      this.filtro.res(9);
+      this.osc.disconnect();
+      this.osc.connect(this.filtro);
+      if (masterReverb) masterReverb.process(this.filtro, 1.6, 1.6);
+      this.env = new p5.Envelope();
+      this.env.setADSR(0.001, 0.14, 0, 0.09);
+      this.env.setRange(0.22, 0);
     }
-    // si ya está sonando: no se toca, se deja terminar su propio ciclo
-  } else {
-    if (s.isPlaying()) s.stop();
-    s.play();
-  }
-}
-
-
-/* ================================================================
-   COMPORTAMIENTO VISUAL (próximo paso)
-   ----------------------------------------------------------------
-   Ahora mismo esta función no hace nada: los 8 cuerpos están fijos
-   en el anillo y sólo cambia su fase. Este es el lugar para, en la
-   siguiente iteración, mover su posición, tamaño o color en función
-   de θᵢ, de la sincronía global (r) o de K.
-   Se llama una vez por cuadro para cada oscilador, después de
-   actualizar su física y antes de dibujarlo.
-   ================================================================ */
-function updateVisualBehavior(osc, dt){
-  // TODO: siguiente iteración.
-  // Ideas para más adelante:
-  //   - osc.pos podría desplazarse según r (el parámetro de orden)
-  //   - el tamaño del cuerpo podría respirar con su propia fase
-  //   - el color podría virar según qué tan alineado está con el
-  //     promedio del grupo
-}
-
-
-class Oscillator {
-  constructor(index, bpm, name, mode){
-    this.index = index;
-    this.name = name;
-    this.mode = mode;        // 'oneshot' o 'sustain'
-    this.bpm = bpm;
-    this.omega = this.bpmToOmega(bpm);
-    this.theta = random(0, TWO_PI);
-    this.flash = 0;          // 0..1, intensidad del destello del último beat
-    this.pos = createVector(0, 0);
   }
 
-  bpmToOmega(bpm){
-    return (bpm / 60) * TWO_PI; // radianes por segundo
-  }
+disparar() {
+    this.pulso = 1.0;
+    // Soltar onda expansiva tipo gota de agua
+    this.ondas.push({ radio: this.cfg.size, alpha: 255 });
 
-  setBPM(bpm){
-    this.bpm = bpm;
-    this.omega = this.bpmToOmega(bpm);
-  }
+    if (!audioReady) return;
 
-  setMode(mode){
-    this.mode = mode;
-  }
-
-  update(dt, all){
-    // término de acoplamiento: cuánto "tiran" de mí los otros 7
-    let coupling = 0;
-    for (let k = 0; k < all.length; k++){
-      if (k === this.index) continue;
-      coupling += sin(all[k].theta - this.theta);
+    if (this.personalidad === 1) {
+      this.osc.freq(this.raiz * 2.6);
+      this.osc.freq(this.raiz * 0.55, 0.16);
+      this.env.play(this.osc, 0, 0.02);
+    } else if (this.personalidad === 2) {
+      const nota = random(ESCALA_PAD);
+      this.osc.freq(nota);
+      this.osc2.freq(nota * 1.004);
+      this.env.play(this.osc, 0, 0.5);
+      this.env.play(this.osc2, 0, 0.5);
+    } else if (this.personalidad === 3) {
+      this.filtro.freq(random(5500, 9500));
+      this.env.play(this.hatNoise, 0, 0.01);
+    } else if (this.personalidad === 4) {
+      const nota = random(ESCALA_SYNTH);
+      this.osc.freq(nota);
+      this.env.play(this.osc, 0, 0.02);
     }
-    coupling *= K / all.length;
-
-    const dtheta = this.omega + coupling;
-    let next = this.theta + dtheta * dt;
-
-    // cada vuelta completa (2π) hacia adelante = un beat
-    while (next >= TWO_PI){
-      next -= TWO_PI;
-      this.onBeat();
-    }
-    while (next < 0){
-      next += TWO_PI;
-    }
-    this.theta = next;
-
-    // el destello decae solo (~350ms)
-    this.flash = max(0, this.flash - dt / 0.35);
-
-    updateVisualBehavior(this, dt);
   }
 
-  onBeat(){
-    this.flash = 1;
-    triggerSound(this.index);
+  actualizarFase(dtSim) {
+    const omegaEfectivo = this.shocked ? this.baseOmega * this.shockMult : this.baseOmega;
+    const acoplamiento = K * r * sin(psi - this.theta);
+    let dtheta = omegaEfectivo + acoplamiento;
+    let nuevaTheta = this.theta + dtheta * dtSim;
+
+    if (this.shocked) {
+      this.ruidoT += dtSim * 2.6;
+      const n = noise(this.ruidoT) - 0.5;
+      nuevaTheta += n * this.shockNoiseAmp * dtSim;
+    }
+
+    const cicloNuevo = floor(nuevaTheta / TWO_PI);
+    this.theta = nuevaTheta;
+    if (cicloNuevo > this.cicloPrevio) this.disparar();
+    this.cicloPrevio = cicloNuevo;
   }
 
-  display(){
+  actualizarVisual(t, dtReal) {
+    this.pulso *= 0.90;
+    if (this.personalidad === 3) this.spin += dtReal * 5.2;
+
+    const nx = noise(this.chaosSeed.x + t * 0.05);
+    const ny = noise(this.chaosSeed.y + t * 0.05);
+    const nz = noise(this.chaosSeed.z + t * 0.05);
+    const posCaos = createVector(
+      map(nx, 0, 1, -CHAOS_EXTENT, CHAOS_EXTENT),
+      map(ny, 0, 1, -CHAOS_EXTENT * 0.7, CHAOS_EXTENT * 0.7),
+      map(nz, 0, 1, -CHAOS_EXTENT, CHAOS_EXTENT)
+    );
+
+    const posOrbita = createVector(
+      ORBIT_RADIUS * this.radioXZ * cos(this.theta),
+      ORBIT_RADIUS * this.polarY,
+      ORBIT_RADIUS * this.radioXZ * sin(this.theta)
+    );
+
+    const wob = (1 - rSmooth * 0.55) * 9;
+    const wobble = createVector(
+      map(noise(this.wobbleSeed + t * 0.6), 0, 1, -wob, wob),
+      map(noise(this.wobbleSeed + 50 + t * 0.6), 0, 1, -wob, wob),
+      map(noise(this.wobbleSeed + 100 + t * 0.6), 0, 1, -wob, wob)
+    );
+
+    const mezcla = constrain(rSmooth, 0, 1);
+    this.pos = p5.Vector.lerp(posCaos, posOrbita, mezcla).add(wobble);
+  }
+
+  proyectarPantalla() {
+    // El machetazo final. window._renderer existe en global mode y salta la mierda del navegador.
+    const objRenderer = window._renderer;
+    if (objRenderer && typeof objRenderer.screenX === 'function') {
+        this.sx = objRenderer.screenX(this.pos.x, this.pos.y, this.pos.z);
+        this.sy = objRenderer.screenY(this.pos.x, this.pos.y, this.pos.z);
+    } else {
+        this.sx = -999;
+        this.sy = -999;
+    }
+  }
+
+  display(t) {
+    const base = this.cfg.color;
+    let col = this.shocked ? [lerp(base[0], 255, 0.55), lerp(base[1], 140, 0.55), lerp(base[2], 90, 0.55)] : base;
+    
+    // Progreso normalizado del ciclo actual (0.0 a 1.0)
+    let faseNorm = (this.theta % TWO_PI) / TWO_PI;
+
     push();
-    translate(this.pos.x, this.pos.y);
+    translate(this.pos.x, this.pos.y, this.pos.z);
 
-    // resplandor del beat
-    if (this.flash > 0){
-      noStroke();
-      fill(COL_AMBER[0], COL_AMBER[1], COL_AMBER[2], this.flash * 90);
-      circle(0, 0, bodyRadius * 2 + this.flash * 26);
-    }
-
-    // cuerpo
-    const edge = lerpColor(color(...COL_LINE_DIM), color(...COL_AMBER), this.flash);
-    stroke(edge);
-    strokeWeight(1.5);
-    fill(...COL_PANEL);
-    circle(0, 0, bodyRadius * 2);
-
-    // pista interna (el "camino" de la oscilación)
+    // 1. Dibujar las ondas expansivas de latidos pasados
+    push();
     noFill();
-    stroke(...COL_LINE_DIM);
-    strokeWeight(1);
-    circle(0, 0, markerRadius * 2);
+    strokeWeight(2);
+    this.ondas.forEach(o => {
+      stroke(col[0], col[1], col[2], o.alpha);
+      push();
+      rotateX(PI/2);
+      torus(o.radio, 1, 24, 3);
+      pop();
+    });
+    pop();
 
-    // marcador de fase, orbitando según θᵢ
-    const mx = cos(this.theta) * markerRadius;
-    const my = sin(this.theta) * markerRadius;
+    // 2. Dibujar el bicho deformado por su ciclo
     noStroke();
-    fill(...COL_CYAN);
-    circle(mx, my, 7);
+    ambientMaterial(col[0], col[1], col[2], 180);
+    specularMaterial(255, 255, 255);
+    shininess(70);
 
-    // etiqueta
-    noStroke();
-    textFont('IBM Plex Mono');
-    textAlign(CENTER, CENTER);
-    fill(...COL_TEXT_DIM);
-    textSize(9.5);
-    text(this.name, 0, bodyRadius + 15);
-    fill(...COL_TEXT_PRIM);
-    textSize(11);
-    text(Math.round(this.bpm) + ' BPM', 0, bodyRadius + 29);
+    if (this.personalidad === 1) { // BAJO: Se infla lento y se contrae de golpe
+      let tension = pow(faseNorm, 3); // Crece exponencialmente antes de estallar
+      let escala = 1 + tension * 0.4;
+      emissiveMaterial(col[0] * tension, col[1] * tension, col[2] * tension);
+      scale(escala);
+      sphere(this.cfg.size, 24, 16);
 
+    } else if (this.personalidad === 2) { // PAD: Medusa que ondula con la fase
+      let brX = 1 + 0.3 * sin(faseNorm * TWO_PI * 2); 
+      let brY = 1 + 0.2 * cos(faseNorm * TWO_PI);
+      scale(brX, brY, brX);
+      emissiveMaterial(col[0] * 0.2, col[1] * 0.2, col[2] * 0.2);
+      sphere(this.cfg.size, 16, 12);
+
+    } else if (this.personalidad === 3) { // HIHAT: Da vueltas según su ciclo
+      rotateX(faseNorm * TWO_PI * 2);
+      rotateY(faseNorm * TWO_PI);
+      emissiveMaterial(col[0] * 0.4, col[1] * 0.4, col[2] * 0.4);
+      torus(this.cfg.size, this.cfg.size * 0.3, 12, 6);
+
+    } else { // SYNTH: Se desenrolla o retuerce con el ciclo
+      rotateZ(faseNorm * TWO_PI);
+      rotateX(this.rotX + faseNorm);
+      noFill();
+      strokeWeight(1.5);
+      stroke(col[0], col[1], col[2], 200 + 55 * faseNorm);
+      emissiveMaterial(0);
+      box(this.cfg.size * (1 + 0.2 * sin(faseNorm * PI)));
+    }
+    
     pop();
   }
-}
 
+  dibujarBajo(col) {
+    const escala = 1 + this.pulso * 0.55;
+    noStroke();
+    ambientMaterial(col[0], col[1], col[2]);
+    specularMaterial(255, 255, 255);
+    shininess(70);
+    const brillo = this.pulso;
+    emissiveMaterial(col[0] * brillo * 0.9, col[1] * brillo * 0.9, col[2] * brillo);
+    sphere(this.cfg.size * escala, 22, 16);
 
-function setup(){
-  const holder = document.getElementById('canvas-holder');
-  const size = min(holder.offsetWidth, 560);
-  cnv = createCanvas(size, size);
-  cnv.parent('canvas-holder');
-
-  rReadout = document.getElementById('rValue');
-
-  for (let i = 0; i < NUM_OSC; i++){
-    oscillators.push(new Oscillator(i, defaultBPM[i], oscNames[i], defaultModes[i]));
+    if (this.pulso > 0.03) {
+      push();
+      blendMode(ADD);
+      noStroke();
+      emissiveMaterial(0, 0, 0);
+      specularMaterial(0);
+      ambientMaterial(col[0], col[1], col[2]);
+      sphere(this.cfg.size * escala * (1.6 + this.pulso), 16, 12);
+      blendMode(BLEND);
+      pop();
+    }
   }
 
-  layout();
-  buildOscGrid();
-  wireControls();
-  frameRate(60);
-}
-
-function windowResized(){
-  layout();
-}
-
-// posiciona los 8 cuerpos en un anillo fijo — esto es lo "quieto"
-function layout(){
-  const holder = document.getElementById('canvas-holder');
-  const size = min(holder.offsetWidth, 560);
-  resizeCanvas(size, size);
-
-  centerX = width / 2;
-  centerY = height / 2;
-  ringRadius = width * 0.34;
-  bodyRadius = width * 0.075;
-  markerRadius = bodyRadius * 0.55;
-
-  for (let i = 0; i < oscillators.length; i++){
-    const a = -HALF_PI + i * (TWO_PI / NUM_OSC);
-    oscillators[i].pos = createVector(
-      centerX + cos(a) * ringRadius,
-      centerY + sin(a) * ringRadius
-    );
-  }
-}
-
-function draw(){
-  background(...COL_BG_DEEP);
-
-  const dt = min(deltaTime / 1000, 0.05); // evita saltos si la pestaña pierde foco
-
-  if (playing){
-    for (const osc of oscillators) osc.update(dt, oscillators);
+  dibujarPad(col, t) {
+    const brX = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 + this.respireOffX);
+    const brY = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 * 1.13 + this.respireOffY);
+    const brZ = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 * 0.87 + this.respireOffZ);
+    scale(brX, brY, brZ);
+    noStroke();
+    ambientMaterial(col[0], col[1], col[2], 150);
+    specularMaterial(255, 255, 255, 150);
+    shininess(35);
+    emissiveMaterial(col[0] * this.pulso * 0.35, col[1] * this.pulso * 0.35, col[2] * this.pulso * 0.35);
+    sphere(this.cfg.size, 18, 14);
   }
 
-  drawRingGuide();
-  drawCouplingWeb();
-  drawOrderParameter();
-  for (const osc of oscillators) osc.display();
-}
+  dibujarHihat(col) {
+    rotateX(this.spin * 0.7);
+    rotateY(this.spin);
+    noStroke();
+    ambientMaterial(col[0], col[1], col[2]);
+    specularMaterial(255, 255, 255);
+    shininess(95);
+    emissiveMaterial(col[0] * this.pulso, col[1] * this.pulso, col[2] * this.pulso);
+    torus(this.cfg.size, this.cfg.size * 0.36, 14, 8);
+  }
 
-// guía punteada del anillo, sólo de referencia visual
-function drawRingGuide(){
-  push();
-  noFill();
-  stroke(...COL_LINE_DIM);
-  strokeWeight(1);
-  drawingContext.setLineDash([2, 6]);
-  circle(centerX, centerY, ringRadius * 2);
-  drawingContext.setLineDash([]);
-  pop();
-}
-
-// el "tejido" de acoplamiento: una línea por cada par de osciladores,
-// que se ilumina cuando esas dos fases están alineadas
-function drawCouplingWeb(){
-  for (let i = 0; i < oscillators.length; i++){
-    for (let j = i + 1; j < oscillators.length; j++){
-      const align = cos(oscillators[j].theta - oscillators[i].theta); // -1..1
-      const alpha = map(align, -1, 1, 4, 70);
-      const w = map(align, -1, 1, 0.4, 1.6);
-      stroke(COL_CYAN[0], COL_CYAN[1], COL_CYAN[2], alpha);
-      strokeWeight(w);
-      line(oscillators[i].pos.x, oscillators[i].pos.y, oscillators[j].pos.x, oscillators[j].pos.y);
+  dibujarSynth(col) {
+    rotateX(this.rotX);
+    rotateY(this.rotY);
+    rotateZ(this.rotZ);
+    noFill();
+    emissiveMaterial(0, 0, 0);
+    strokeWeight(1.6);
+    stroke(col[0], col[1], col[2], 230);
+    box(this.cfg.size);
+    if (this.pulso > 0.05) {
+      push();
+      blendMode(ADD);
+      strokeWeight(3.2);
+      stroke(col[0], col[1], col[2], 255 * this.pulso);
+      box(this.cfg.size * 1.12);
+      blendMode(BLEND);
+      pop();
     }
   }
 }
 
-// parámetro de orden r·e^(iψ) = (1/N)·Σ e^(iθⱼ) — mide la sincronía global
-function computeOrderParameter(){
-  let sumCos = 0, sumSin = 0;
-  for (const osc of oscillators){
-    sumCos += cos(osc.theta);
-    sumSin += sin(osc.theta);
-  }
-  const r = sqrt(sumCos * sumCos + sumSin * sumSin) / oscillators.length;
-  const psi = atan2(sumSin, sumCos);
-  return { r, psi };
+function crearParticulas() {
+  particulas = [];
+  Array.from({ length: 46 }).forEach(() => {
+    particulas.push({
+      pos: createVector(random(-420, 420), random(-420, 420), random(-420, 420)),
+      vel: random(0.25, 0.7),
+      tam: random(2, 5.5),
+      fase: random(1000)
+    });
+  });
 }
 
-function drawOrderParameter(){
-  const { r, psi } = computeOrderParameter();
-  if (rReadout) rReadout.textContent = r.toFixed(2);
-
-  push();
-  translate(centerX, centerY);
-  stroke(...COL_CYAN);
-  strokeWeight(2);
-  const len = r * ringRadius * 0.85;
-  line(0, 0, cos(psi) * len, sin(psi) * len);
+function actualizarYDibujarParticulas(dtReal) {
   noStroke();
-  fill(...COL_CYAN);
-  circle(0, 0, 6);
+  push();
+  blendMode(ADD);
+  particulas.forEach(p => {
+    p.pos.y -= p.vel * dtReal * 26;
+    if (p.pos.y < -430) {
+      p.pos.y = 430;
+      p.pos.x = random(-420, 420);
+      p.pos.z = random(-420, 420);
+    }
+    const centelleo = 0.5 + 0.5 * sin(frameCount * 0.05 + p.fase);
+    push();
+    translate(p.pos.x, p.pos.y, p.pos.z);
+    ambientMaterial(0, 0, 0);
+    specularMaterial(0);
+    emissiveMaterial(150, 235, 255, 90 * centelleo);
+    sphere(p.tam, 6, 4);
+    pop();
+  });
+  blendMode(BLEND);
   pop();
 }
 
-
-/* ---------------- controles (HTML fuera del canvas) ---------------- */
-
-function buildOscGrid(){
-  const grid = document.getElementById('oscGrid');
-  grid.innerHTML = '';
-  oscillators.forEach((osc, i) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'osc-ctrl';
-    wrap.innerHTML = `
-      <label for="bpm${i}">${osc.name}</label>
-      <input type="number" id="bpm${i}" min="40" max="220" step="1" value="${osc.bpm}">
-      <button type="button" class="mode-toggle" id="mode${i}" data-mode="${osc.mode}"></button>
-    `;
-    grid.appendChild(wrap);
-
-    document.getElementById(`bpm${i}`).addEventListener('input', (e) => {
-      const v = Number(e.target.value) || 1;
-      oscillators[i].setBPM(v);
-    });
-
-    const modeBtn = document.getElementById(`mode${i}`);
-    paintModeButton(modeBtn, osc.mode);
-    modeBtn.addEventListener('click', () => {
-      const next = osc.mode === 'sustain' ? 'oneshot' : 'sustain';
-      osc.setMode(next);
-      modeBtn.dataset.mode = next;
-      paintModeButton(modeBtn, next);
-    });
+function dibujarSueloRejilla() {
+  push();
+  stroke(60, 190, 210, 55);
+  strokeWeight(1);
+  noFill();
+  const extension = 760, paso = 95, y0 = 250;
+  const numSteps = Math.floor((extension * 2) / paso);
+  Array.from({ length: numSteps + 1 }).forEach((_, i) => {
+    let val = -extension + (i * paso);
+    line(val, y0, -extension, val, y0, extension);
+    line(-extension, y0, val, extension, y0, val);
   });
+  pop();
 }
 
-// texto del botón según el modo: qué le pasa al sonido cuando cae un beat
-function paintModeButton(btn, mode){
-  btn.textContent = mode === 'sustain' ? '≈ sostenido' : '● un golpe';
-}
+function setup() {
+  setAttributes('antialias', true);
+  const cnv = createCanvas(windowWidth, windowHeight, WEBGL);
+  cnv.parent(document.body);
+  frameRate(60);
 
-function unlockAudioIfNeeded(){
-  if (typeof getAudioContext === 'function' && getAudioContext().state !== 'running'){
-    userStartAudio();
+  if (typeof p5.Reverb !== 'undefined') {
+    masterReverb = new p5.Reverb();
+    masterReverb.drywet(0.32);
+  }
+
+  agents = [];
+  const secuenciaPersonalidades = [1, 1, 2, 2, 3, 3, 4, 4];
+  const subIndicePorPersonalidad = {};
+  
+  Array.from({ length: N }).forEach((_, i) => {
+    const p = secuenciaPersonalidades[i];
+    subIndicePorPersonalidad[p] = (subIndicePorPersonalidad[p] || 0);
+    agents.push(new Agente(i, p, subIndicePorPersonalidad[p]));
+    subIndicePorPersonalidad[p]++;
+  });
+
+  crearParticulas();
+
+  kSlider = document.getElementById('kSlider');
+  kReadout = document.getElementById('kReadout');
+  rValueEl = document.getElementById('rValue');
+  
+  if (kSlider) {
+      K = parseFloat(kSlider.value);
+      if(kReadout) kReadout.textContent = K.toFixed(2);
+      kSlider.addEventListener('input', () => {
+        K = parseFloat(kSlider.value);
+        if(kReadout) kReadout.textContent = K.toFixed(2);
+      });
+  }
+
+  const btnIniciar = document.getElementById('btnIniciar');
+  if (btnIniciar) {
+      btnIniciar.addEventListener('click', () => {
+        try {
+          if (typeof userStartAudio === 'function') userStartAudio();
+          const ctx = (typeof getAudioContext === 'function') ? getAudioContext() : null;
+          if (ctx && ctx.state !== 'running') ctx.resume();
+        } catch (e) {}
+        audioReady = (typeof p5.Oscillator !== 'undefined');
+        document.getElementById('inicio').classList.add('oculto');
+      });
   }
 }
 
-function wireControls(){
-  const playBtn = document.getElementById('playBtn');
-  playBtn.addEventListener('click', () => {
-    unlockAudioIfNeeded();
-    playing = !playing;
-    playBtn.textContent = playing ? '❚❚ Pausar' : '▶ Iniciar';
-    playBtn.setAttribute('aria-pressed', String(playing));
-  });
-
-  const kSlider = document.getElementById('kSlider');
-  const kValue = document.getElementById('kValue');
-  kSlider.addEventListener('input', (e) => {
-    K = Number(e.target.value);
-    kValue.textContent = K.toFixed(2);
-  });
-
-  document.getElementById('randPhaseBtn').addEventListener('click', () => {
-    for (const osc of oscillators) osc.theta = random(0, TWO_PI);
-  });
-
-  document.getElementById('randBpmBtn').addEventListener('click', () => {
-    oscillators.forEach((osc, i) => {
-      const bpm = Math.round(random(90, 150));
-      osc.setBPM(bpm);
-      document.getElementById(`bpm${i}`).value = bpm;
-    });
-  });
-
-  document.getElementById('resetBtn').addEventListener('click', () => {
-    oscillators.forEach((osc, i) => {
-      osc.setBPM(defaultBPM[i]);
-      osc.setMode(defaultModes[i]);
-      osc.theta = random(0, TWO_PI);
-      document.getElementById(`bpm${i}`).value = defaultBPM[i];
-      const modeBtn = document.getElementById(`mode${i}`);
-      modeBtn.dataset.mode = defaultModes[i];
-      paintModeButton(modeBtn, defaultModes[i]);
-    });
-    K = 1.4;
-    kSlider.value = 1.4;
-    kValue.textContent = '1.40';
-  });
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
 }
+
+function actualizarKuramoto(dtSim) {
+  let sumaCos = 0, sumaSin = 0;
+  agents.forEach(a => {
+    sumaCos += cos(a.theta);
+    sumaSin += sin(a.theta);
+  });
+  const mc = sumaCos / N, ms = sumaSin / N;
+  r = sqrt(mc * mc + ms * ms);
+  psi = atan2(ms, mc);
+  rSmooth += (r - rSmooth) * 0.04;
+
+  agents.forEach(a => a.actualizarFase(dtSim));
+}
+
+function draw() {
+  const dtReal = constrain(deltaTime / 1000, 0, 0.05);
+  const dtSim = dtReal * TIME_SCALE;
+  const t = millis() / 1000;
+
+  actualizarKuramoto(dtSim);
+  if (rValueEl) rValueEl.textContent = r.toFixed(2);
+
+  const cFondoBajo = color(6, 10, 22);
+  const cFondoAlto = color(6, 46, 58);
+  const fondo = lerpColor(cFondoBajo, cFondoAlto, rSmooth * 0.7);
+  background(fondo);
+
+  const cAmbBajo = color(16, 24, 55);
+  const cAmbAlto = color(60, 235, 235);
+  const ambiente = lerpColor(cAmbBajo, cAmbAlto, rSmooth);
+  ambientLight(red(ambiente), green(ambiente), blue(ambiente));
+
+  const lx = sin(t * 0.35) * 500;
+  const lz = cos(t * 0.35) * 500;
+  pointLight(255, 255, 255, lx, -260, lz);
+  directionalLight(70, 110, 150, -0.4, 0.6, -0.7);
+
+  camAngle += 0.09 * dtReal;
+  const parX = map(constrain(mouseX, 0, width), 0, width, -40, 40);
+  const parY = map(constrain(mouseY, 0, height), 0, height, -25, 25);
+  const eyeX = cos(camAngle) * 640 + parX;
+  const eyeZ = sin(camAngle) * 640;
+  const eyeY = -170 + sin(camAngle * 0.5) * 40 + parY;
+  camera(eyeX, eyeY, eyeZ, 0, 0, 0, 0, 1, 0);
+
+  agents.forEach(a => {
+    a.actualizarVisual(t, dtReal);
+    a.proyectarPantalla();
+  });
+
+  dibujarSueloRejilla();
+  actualizarYDibujarParticulas(dtReal);
+
+  const ordenados = [...agents].sort((a, b) => {
+    const da = (a.pos.x - eyeX) ** 2 + (a.pos.y - eyeY) ** 2 + (a.pos.z - eyeZ) ** 2;
+    const db = (b.pos.x - eyeX) ** 2 + (b.pos.y - eyeY) ** 2 + (b.pos.z - eyeZ) ** 2;
+    return db - da;
+  });
+  
+  ordenados.forEach(a => a.display(t));
+
+  const cercano = agenteMasCercano(mouseX, mouseY);
+  cursor(cercano ? HAND : ARROW);
+}
+
+function agenteMasCercano(px, py) {
+  let mejor = null, mejorD = Infinity;
+  agents.forEach(a => {
+    const d = dist(px, py, a.sx, a.sy);
+    if (d < a.cfg.hitR && d < mejorD) { mejorD = d; mejor = a; }
+  });
+  return mejor;
+}
+
+function iniciarShock(px, py) {
+  const a = agenteMasCercano(px, py);
+  if (!a) return;
+  heldAgent = a;
+  a.shocked = true;
+  a.shockMult = random(2.4, 4.2);
+  a.shockNoiseAmp = random(2.2, 4.0);
+}
+
+function terminarShock() {
+  if (heldAgent) heldAgent.shocked = false;
+  heldAgent = null;
+}
+
+function enZonaDeInterfaz(py) {
+  return py > height - 150;
+}
+
+function mousePressed() {
+  if (mouseY < 0 || mouseY > height || enZonaDeInterfaz(mouseY)) return;
+  iniciarShock(mouseX, mouseY);
+}
+
+function mouseReleased() { terminarShock(); }
+
+function touchStarted() {
+  if (touches.length > 0 && !enZonaDeInterfaz(touches[0].y)) iniciarShock(touches[0].x, touches[0].y);
+  return false;
+}
+
+function touchEnded() { terminarShock(); return false; }

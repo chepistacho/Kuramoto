@@ -1,28 +1,133 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Ecosistema Kuramoto</title>
-
+  <title>Ecosistema Kuramoto - Silicon Dreams</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/addons/p5.sound.min.js"></script>
-
   <link rel="stylesheet" type="text/css" href="style.css">
 </head>
+
 <body>
 
+  <!-- Modal de Inicio -->
   <div id="inicio">
     <div id="tarjetaInicio">
       <h2>Ecosistema Kuramoto</h2>
-      <p>Ocho agentes acoplados, gobernados por la misma ecuación de fase. Ajusta el acoplamiento, o toca un agente para arrancarlo de la sincronía y observa cómo el sistema lucha por recuperarla.</p>
-      <button id="btnIniciar">Activar ecosistema</button>
+      <p>Ocho agentes acoplados, gobernados por la misma ecuación de fase. Ajusta el acoplamiento para ver el sistema
+        luchar por la sincronía.</p>
+      <button id="btnIniciar" class="retro-btn">Activar ecosistema</button>
     </div>
   </div>
 
-  <div id="panel">
+  <!-- Barra Superior: Control de Cuerpos y Tempos -->
+  <div id="ui-top" class="retro-panel">
+    <div class="drag-handle"></div>
+    <span class="panel-label">Objects:</span>
+
+    <!-- Cuerpo 1 (Bajo - Sphere) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="0" style="border-color: #ff4646;">
+        <span class="color-dot" style="background: #ff4646;"></span> ● 1
+      </button>
+      <div class="tempo-popup" id="popup-0">
+        <label>Tempo 1: <span val-id="0">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="0" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 2 (Bajo - Sphere) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="1" style="border-color: #ff9632;">
+        <span class="color-dot" style="background: #ff9632;"></span> ● 2
+      </button>
+      <div class="tempo-popup" id="popup-1">
+        <label>Tempo 2: <span val-id="1">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="1" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 3 (Pad - Ellipsoid) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="2" style="border-color: #f0dc32;">
+        <span class="color-dot" style="background: #f0dc32;"></span> ⬬ 3
+      </button>
+      <div class="tempo-popup" id="popup-2">
+        <label>Tempo 3: <span val-id="2">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="2" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 4 (Pad - Ellipsoid) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="3" style="border-color: #46e664;">
+        <span class="color-dot" style="background: #46e664;"></span> ⬬ 4
+      </button>
+      <div class="tempo-popup" id="popup-3">
+        <label>Tempo 4: <span val-id="3">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="3" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 5 (Hihat - Torus) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="4" style="border-color: #32dcf0;">
+        <span class="color-dot" style="background: #32dcf0;"></span> ◎ 5
+      </button>
+      <div class="tempo-popup" id="popup-4">
+        <label>Tempo 5: <span val-id="4">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="4" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 6 (Hihat - Torus) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="5" style="border-color: #4678ff;">
+        <span class="color-dot" style="background: #4678ff;"></span> ◎ 6
+      </button>
+      <div class="tempo-popup" id="popup-5">
+        <label>Tempo 6: <span val-id="5">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="5" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 7 (Synth - Box) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="6" style="border-color: #b450ff;">
+        <span class="color-dot" style="background: #b450ff;"></span> ■ 7
+      </button>
+      <div class="tempo-popup" id="popup-6">
+        <label>Tempo 7: <span val-id="6">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="6" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+
+    <!-- Cuerpo 8 (Synth - Box) -->
+    <div class="body-dropdown-wrapper">
+      <button class="retro-btn body-btn" data-id="7" style="border-color: #ff64c8;">
+        <span class="color-dot" style="background: #ff64c8;"></span> ■ 8
+      </button>
+      <div class="tempo-popup" id="popup-7">
+        <label>Tempo 8: <span val-id="7">120 BPM</span></label>
+        <input type="range" class="tempo-slider" data-id="7" min="40" max="240" step="1" value="120">
+      </div>
+    </div>
+  </div>
+
+  <!-- Barra Izquierda: Cámara y Manipulación -->
+  <div id="ui-left" class="retro-panel">
+    <div class="drag-handle-h"></div>
+    <button class="retro-btn trackball" id="btnTrackball" title="Rotar Cámara">✥</button>
+    <button class="retro-btn icon-btn" id="btnPan" title="Panear">⇹</button>
+    <button class="retro-btn icon-btn" id="btnZoom" title="Zoom">⇕</button>
+  </div>
+
+  <!-- Barra Inferior: Controles Generales -->
+  <div id="panel" class="retro-panel">
     <div class="fila-superior">
-      <h1>Acoplamiento&nbsp;K</h1>
+      <h1>Acoplamiento K</h1>
       <span id="kReadout">1.60</span>
     </div>
     <input type="range" id="kSlider" min="0" max="6" step="0.02" value="1.6">
@@ -33,8 +138,7 @@
     </div>
   </div>
 
-  <div id="hint">Mantén pulsado sobre un agente para desincronizarlo. Suéltalo y el sistema lo llevará de vuelta.</div>
-
   <script src="sketch.js"></script>
 </body>
+
 </html>

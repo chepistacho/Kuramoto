@@ -1,42 +1,59 @@
+// noprotect
 /* =========================================================================
-   ECOSISTEMA KURAMOTO — p5.js (WEBGL)
+   ECOSISTEMA KURAMOTO — p5.js (WEBGL) 
    ------------------------------------------------------------------------- */
 p5.disableFriendlyErrors = true;
 
 const N = 8;
 const TIME_SCALE = 1.0;
-const ORBIT_RADIUS = 230;
 const CHAOS_EXTENT = 360;
 
 const PERSONALIDADES = {
-  1: { nombre: 'bajo',  color: [70, 120, 255],  omegaRango: [0.55, 0.72], size: 34, hitR: 58 },
-  2: { nombre: 'pad',   color: [110, 240, 205], omegaRango: [0.60, 0.80], size: 27, hitR: 46 },
-  3: { nombre: 'hihat', color: [225, 250, 255], omegaRango: [1.32, 1.70], size: 11, hitR: 30 },
-  4: { nombre: 'synth', color: [175, 145, 255], omegaRango: [0.92, 1.22], size: 23, hitR: 42 }
+  1: { nombre: 'bajo', omegaRango: [0.55, 0.72], size: 34, hitR: 58 },
+  2: { nombre: 'pad', omegaRango: [0.60, 0.80], size: 27, hitR: 46 },
+  3: { nombre: 'hihat', omegaRango: [1.32, 1.70], size: 11, hitR: 30 },
+  4: { nombre: 'synth', omegaRango: [0.92, 1.22], size: 23, hitR: 42 }
 };
 
-const ESCALA_PAD   = [196.00, 220.00, 233.08, 261.63];
+const COLORES_AGENTES = [
+  [255, 70, 70],   // 0: Rojo
+  [255, 150, 50],  // 1: Naranja
+  [240, 220, 50],  // 2: Amarillo
+  [70, 230, 100],  // 3: Verde
+  [50, 220, 240],  // 4: Cian
+  [70, 120, 255],  // 5: Azul
+  [180, 80, 255],  // 6: Morado
+  [255, 100, 200]  // 7: Rosado
+];
+
+const ESCALA_PAD = [196.00, 220.00, 233.08, 261.63];
 const ESCALA_SYNTH = [392.00, 440.00, 466.16, 523.25, 587.33];
-const RAICES_BAJO  = [55.00, 61.74];
+const RAICES_BAJO = [55.00, 61.74];
 
 let agents = [];
 let K = 1.6;
 let r = 0, psi = 0, rSmooth = 0;
-let camAngle = 0;
 let heldAgent = null;
 let audioReady = false;
 let masterReverb;
 let particulas = [];
 let kSlider, kReadout, rValueEl;
+let camMode = 'none';
+let camTargetX = 0, camTargetY = 0, camTargetZ = 0;
+let camRadius = 592;
+let camTheta = 0;
+let camPhi = -0.204;
 
 class Agente {
   constructor(indice, personalidad, subIndice) {
     this.i = indice;
     this.personalidad = personalidad;
-    const cfg = PERSONALIDADES[personalidad];
-    this.cfg = cfg;
+    this.cfg = PERSONALIDADES[personalidad];
 
-    const [wLo, wHi] = cfg.omegaRango;
+    this.colorPropio = COLORES_AGENTES[indice % COLORES_AGENTES.length];
+    this.bpmFactor = 1.0;
+
+    const [wLo, wHi] = this.cfg.omegaRango;
     this.baseOmega = lerp(wLo, wHi, subIndice === 0 ? 0.12 : 0.88) + random(-0.03, 0.03);
     this.theta = random(TWO_PI);
     this.cicloPrevio = floor(this.theta / TWO_PI);
@@ -51,8 +68,13 @@ class Agente {
     this.pos = createVector();
     this.sx = 0; this.sy = 0;
 
-    this.polarY = N > 1 ? 1 - (indice / (N - 1)) * 2 : 0;
-    this.radioXZ = sqrt(max(0, 1 - this.polarY * this.polarY));
+    let fila = floor(indice / 4);
+    let col = indice % 4;
+    this.gridPos = createVector(
+      (col - 1.5) * 160,
+      (fila - 0.5) * -160,
+      0
+    );
 
     this.pulso = 0;
     this.rotX = random(TWO_PI); this.rotY = random(TWO_PI); this.rotZ = 0;
@@ -61,7 +83,7 @@ class Agente {
     this.respireOffY = random(TWO_PI);
     this.respireOffZ = random(TWO_PI);
 
-    this.ondas = []; // Aquí guardamos los anillos de energía que suelta en cada ciclo
+    this.ondas = [];
     this.crearVoz(subIndice);
   }
 
@@ -117,9 +139,8 @@ class Agente {
     }
   }
 
-disparar() {
+  disparar() {
     this.pulso = 1.0;
-    // Soltar onda expansiva tipo gota de agua
     this.ondas.push({ radio: this.cfg.size, alpha: 255 });
 
     if (!audioReady) return;
@@ -145,9 +166,11 @@ disparar() {
   }
 
   actualizarFase(dtSim) {
-    const omegaEfectivo = this.shocked ? this.baseOmega * this.shockMult : this.baseOmega;
+    const omegaBase = this.shocked ? this.baseOmega * this.shockMult : this.baseOmega;
+    const omegaEfectivo = omegaBase * this.bpmFactor;
     const acoplamiento = K * r * sin(psi - this.theta);
     let dtheta = omegaEfectivo + acoplamiento;
+    this.currentDtheta = dtheta;
     let nuevaTheta = this.theta + dtheta * dtSim;
 
     if (this.shocked) {
@@ -163,23 +186,36 @@ disparar() {
   }
 
   actualizarVisual(t, dtReal) {
-    this.pulso *= 0.90;
-    if (this.personalidad === 3) this.spin += dtReal * 5.2;
+    const speed = this.currentDtheta ? (this.currentDtheta / this.baseOmega) : 1;
+    this.pulso *= Math.pow(0.90, speed * dtReal * 60);
+
+    if (this.personalidad === 3 || this.personalidad === 4) {
+      if (this.personalidad === 3) this.spin += dtReal * 5.2 * speed;
+      if (this.personalidad === 4) {
+        this.rotX += dtReal * 1.5 * speed;
+        this.rotY += dtReal * 2.1 * speed;
+        this.rotZ += dtReal * 1.2 * speed;
+      }
+    }
+
+    for (let i = this.ondas.length - 1; i >= 0; i--) {
+      let o = this.ondas[i];
+      o.radio += dtReal * 150 * speed;
+      o.alpha -= dtReal * 250 * speed;
+      if (o.alpha <= 0) this.ondas.splice(i, 1);
+    }
 
     const nx = noise(this.chaosSeed.x + t * 0.05);
     const ny = noise(this.chaosSeed.y + t * 0.05);
     const nz = noise(this.chaosSeed.z + t * 0.05);
+
     const posCaos = createVector(
       map(nx, 0, 1, -CHAOS_EXTENT, CHAOS_EXTENT),
       map(ny, 0, 1, -CHAOS_EXTENT * 0.7, CHAOS_EXTENT * 0.7),
       map(nz, 0, 1, -CHAOS_EXTENT, CHAOS_EXTENT)
     );
 
-    const posOrbita = createVector(
-      ORBIT_RADIUS * this.radioXZ * cos(this.theta),
-      ORBIT_RADIUS * this.polarY,
-      ORBIT_RADIUS * this.radioXZ * sin(this.theta)
-    );
+    const posSincronia = this.gridPos;
 
     const wob = (1 - rSmooth * 0.55) * 9;
     const wobble = createVector(
@@ -189,85 +225,50 @@ disparar() {
     );
 
     const mezcla = constrain(rSmooth, 0, 1);
-    this.pos = p5.Vector.lerp(posCaos, posOrbita, mezcla).add(wobble);
+    this.pos = p5.Vector.lerp(posCaos, posSincronia, mezcla).add(wobble);
   }
 
   proyectarPantalla() {
-    // El machetazo final. window._renderer existe en global mode y salta la mierda del navegador.
     const objRenderer = window._renderer;
     if (objRenderer && typeof objRenderer.screenX === 'function') {
-        this.sx = objRenderer.screenX(this.pos.x, this.pos.y, this.pos.z);
-        this.sy = objRenderer.screenY(this.pos.x, this.pos.y, this.pos.z);
+      this.sx = objRenderer.screenX(this.pos.x, this.pos.y, this.pos.z);
+      this.sy = objRenderer.screenY(this.pos.x, this.pos.y, this.pos.z);
     } else {
-        this.sx = -999;
-        this.sy = -999;
+      this.sx = -999;
+      this.sy = -999;
     }
   }
 
   display(t) {
-    const base = this.cfg.color;
+    const base = this.colorPropio;
     let col = this.shocked ? [lerp(base[0], 255, 0.55), lerp(base[1], 140, 0.55), lerp(base[2], 90, 0.55)] : base;
-    
-    // Progreso normalizado del ciclo actual (0.0 a 1.0)
-    let faseNorm = (this.theta % TWO_PI) / TWO_PI;
 
     push();
     translate(this.pos.x, this.pos.y, this.pos.z);
 
-    // 1. Dibujar las ondas expansivas de latidos pasados
     push();
     noFill();
     strokeWeight(2);
     this.ondas.forEach(o => {
       stroke(col[0], col[1], col[2], o.alpha);
       push();
-      rotateX(PI/2);
+      rotateX(PI / 2);
       torus(o.radio, 1, 24, 3);
       pop();
     });
     pop();
 
-    // 2. Dibujar el bicho deformado por su ciclo
-    noStroke();
-    ambientMaterial(col[0], col[1], col[2], 180);
-    specularMaterial(255, 255, 255);
-    shininess(70);
+    if (this.personalidad === 1) this.dibujarBajo(col);
+    else if (this.personalidad === 2) this.dibujarPad(col, t);
+    else if (this.personalidad === 3) this.dibujarHihat(col);
+    else if (this.personalidad === 4) this.dibujarSynth(col);
 
-    if (this.personalidad === 1) { // BAJO: Se infla lento y se contrae de golpe
-      let tension = pow(faseNorm, 3); // Crece exponencialmente antes de estallar
-      let escala = 1 + tension * 0.4;
-      emissiveMaterial(col[0] * tension, col[1] * tension, col[2] * tension);
-      scale(escala);
-      sphere(this.cfg.size, 24, 16);
-
-    } else if (this.personalidad === 2) { // PAD: Medusa que ondula con la fase
-      let brX = 1 + 0.3 * sin(faseNorm * TWO_PI * 2); 
-      let brY = 1 + 0.2 * cos(faseNorm * TWO_PI);
-      scale(brX, brY, brX);
-      emissiveMaterial(col[0] * 0.2, col[1] * 0.2, col[2] * 0.2);
-      sphere(this.cfg.size, 16, 12);
-
-    } else if (this.personalidad === 3) { // HIHAT: Da vueltas según su ciclo
-      rotateX(faseNorm * TWO_PI * 2);
-      rotateY(faseNorm * TWO_PI);
-      emissiveMaterial(col[0] * 0.4, col[1] * 0.4, col[2] * 0.4);
-      torus(this.cfg.size, this.cfg.size * 0.3, 12, 6);
-
-    } else { // SYNTH: Se desenrolla o retuerce con el ciclo
-      rotateZ(faseNorm * TWO_PI);
-      rotateX(this.rotX + faseNorm);
-      noFill();
-      strokeWeight(1.5);
-      stroke(col[0], col[1], col[2], 200 + 55 * faseNorm);
-      emissiveMaterial(0);
-      box(this.cfg.size * (1 + 0.2 * sin(faseNorm * PI)));
-    }
-    
     pop();
   }
 
   dibujarBajo(col) {
-    const escala = 1 + this.pulso * 0.55;
+    const pulsoContinuo = 0.12 * sin(this.theta * TWO_PI);
+    const escala = 1 + pulsoContinuo + this.pulso * 0.55;
     noStroke();
     ambientMaterial(col[0], col[1], col[2]);
     specularMaterial(255, 255, 255);
@@ -290,9 +291,9 @@ disparar() {
   }
 
   dibujarPad(col, t) {
-    const brX = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 + this.respireOffX);
-    const brY = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 * 1.13 + this.respireOffY);
-    const brZ = 1 + 0.28 * sin(t * this.baseOmega * TWO_PI * 0.5 * 0.87 + this.respireOffZ);
+    const brX = 1 + 0.28 * sin(this.theta * TWO_PI * 0.5 + this.respireOffX);
+    const brY = 1 + 0.28 * sin(this.theta * TWO_PI * 0.5 * 1.13 + this.respireOffY);
+    const brZ = 1 + 0.28 * sin(this.theta * TWO_PI * 0.5 * 0.87 + this.respireOffZ);
     scale(brX, brY, brZ);
     noStroke();
     ambientMaterial(col[0], col[1], col[2], 150);
@@ -372,16 +373,21 @@ function actualizarYDibujarParticulas(dtReal) {
 
 function dibujarSueloRejilla() {
   push();
-  stroke(60, 190, 210, 55);
+  stroke(80);
   strokeWeight(1);
   noFill();
-  const extension = 760, paso = 95, y0 = 250;
+  const extension = 800, paso = 100, y0 = 350;
   const numSteps = Math.floor((extension * 2) / paso);
   Array.from({ length: numSteps + 1 }).forEach((_, i) => {
     let val = -extension + (i * paso);
     line(val, y0, -extension, val, y0, extension);
     line(-extension, y0, val, extension, y0, val);
   });
+
+  stroke(40);
+  strokeWeight(2);
+  line(0, y0, -extension, 0, y0, extension);
+  line(-extension, y0, 0, extension, y0, 0);
   pop();
 }
 
@@ -396,10 +402,54 @@ function setup() {
     masterReverb.drywet(0.32);
   }
 
+  const btnTrackball = document.getElementById('btnTrackball');
+  const btnPan = document.getElementById('btnPan');
+  const btnZoom = document.getElementById('btnZoom');
+
+  if (btnTrackball) {
+    btnTrackball.addEventListener('mousedown', (e) => { camMode = 'trackball'; e.preventDefault(); });
+  }
+  if (btnPan) {
+    btnPan.addEventListener('mousedown', (e) => { camMode = 'pan'; e.preventDefault(); });
+  }
+  if (btnZoom) {
+    btnZoom.addEventListener('mousedown', (e) => { camMode = 'zoom'; e.preventDefault(); });
+  }
+
+  window.addEventListener('mouseup', () => {
+    camMode = 'none';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (camMode === 'none') return;
+
+    let mX = e.movementX;
+    let mY = e.movementY;
+
+    if (camMode === 'trackball') {
+      camTheta -= mX * 0.005;
+      camPhi -= mY * 0.005;
+      camPhi = constrain(camPhi, -PI / 2 + 0.01, PI / 2 - 0.01);
+    } else if (camMode === 'pan') {
+      let rightX = sin(camTheta);
+      let rightZ = -cos(camTheta);
+      let upX = -sin(camPhi) * cos(camTheta);
+      let upY = cos(camPhi);
+      let upZ = -sin(camPhi) * sin(camTheta);
+
+      camTargetX -= (mX * rightX + mY * upX) * 1.5;
+      camTargetY -= mY * upY * 1.5;
+      camTargetZ -= (mX * rightZ + mY * upZ) * 1.5;
+    } else if (camMode === 'zoom') {
+      camRadius += mY * 2;
+      camRadius = constrain(camRadius, 50, 2000);
+    }
+  });
+
   agents = [];
   const secuenciaPersonalidades = [1, 1, 2, 2, 3, 3, 4, 4];
   const subIndicePorPersonalidad = {};
-  
+
   Array.from({ length: N }).forEach((_, i) => {
     const p = secuenciaPersonalidades[i];
     subIndicePorPersonalidad[p] = (subIndicePorPersonalidad[p] || 0);
@@ -412,27 +462,69 @@ function setup() {
   kSlider = document.getElementById('kSlider');
   kReadout = document.getElementById('kReadout');
   rValueEl = document.getElementById('rValue');
-  
+
   if (kSlider) {
+    K = parseFloat(kSlider.value);
+    if (kReadout) kReadout.textContent = K.toFixed(2);
+    kSlider.addEventListener('input', () => {
       K = parseFloat(kSlider.value);
-      if(kReadout) kReadout.textContent = K.toFixed(2);
-      kSlider.addEventListener('input', () => {
-        K = parseFloat(kSlider.value);
-        if(kReadout) kReadout.textContent = K.toFixed(2);
-      });
+      if (kReadout) kReadout.textContent = K.toFixed(2);
+    });
   }
+
+  document.querySelectorAll('.body-btn').forEach(btn => {
+    const id = btn.getAttribute('data-id');
+    const popup = document.getElementById(`popup-${id}`);
+
+    // Mostrar/Ocultar el menú al hacer clic en el botón
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Cerrar otros popups abiertos
+      document.querySelectorAll('.tempo-popup').forEach(p => {
+        if (p !== popup) p.classList.remove('activo');
+      });
+      popup.classList.toggle('activo');
+    });
+  });
+
+  document.querySelectorAll('.tempo-slider').forEach(slider => {
+    const id = parseInt(slider.getAttribute('data-id'));
+    const valLabel = document.querySelector(`[val-id="${id}"]`);
+
+    slider.addEventListener('input', (e) => {
+      const bpmVal = parseFloat(e.target.value);
+      if (agents[id]) {
+        agents[id].bpmFactor = bpmVal / 120;
+      }
+      if (valLabel) {
+        valLabel.textContent = bpmVal + ' BPM';
+      }
+    });
+  });
+
+  window.addEventListener('click', () => {
+    document.querySelectorAll('.tempo-popup').forEach(p => {
+      p.classList.remove('activo');
+    });
+  });
+
+  document.querySelectorAll('.tempo-popup').forEach(popup => {
+    popup.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  });
 
   const btnIniciar = document.getElementById('btnIniciar');
   if (btnIniciar) {
-      btnIniciar.addEventListener('click', () => {
-        try {
-          if (typeof userStartAudio === 'function') userStartAudio();
-          const ctx = (typeof getAudioContext === 'function') ? getAudioContext() : null;
-          if (ctx && ctx.state !== 'running') ctx.resume();
-        } catch (e) {}
-        audioReady = (typeof p5.Oscillator !== 'undefined');
-        document.getElementById('inicio').classList.add('oculto');
-      });
+    btnIniciar.addEventListener('click', () => {
+      try {
+        if (typeof userStartAudio === 'function') userStartAudio();
+        const ctx = (typeof getAudioContext === 'function') ? getAudioContext() : null;
+        if (ctx && ctx.state !== 'running') ctx.resume();
+      } catch (e) { }
+      audioReady = (typeof p5.Oscillator !== 'undefined');
+      document.getElementById('inicio').classList.add('oculto');
+    });
   }
 }
 
@@ -462,28 +554,15 @@ function draw() {
   actualizarKuramoto(dtSim);
   if (rValueEl) rValueEl.textContent = r.toFixed(2);
 
-  const cFondoBajo = color(6, 10, 22);
-  const cFondoAlto = color(6, 46, 58);
-  const fondo = lerpColor(cFondoBajo, cFondoAlto, rSmooth * 0.7);
-  background(fondo);
+  background('#a3a3a3');
 
-  const cAmbBajo = color(16, 24, 55);
-  const cAmbAlto = color(60, 235, 235);
-  const ambiente = lerpColor(cAmbBajo, cAmbAlto, rSmooth);
-  ambientLight(red(ambiente), green(ambiente), blue(ambiente));
+  ambientLight(150);
+  directionalLight(255, 255, 255, -0.5, 1, -0.5);
 
-  const lx = sin(t * 0.35) * 500;
-  const lz = cos(t * 0.35) * 500;
-  pointLight(255, 255, 255, lx, -260, lz);
-  directionalLight(70, 110, 150, -0.4, 0.6, -0.7);
-
-  camAngle += 0.09 * dtReal;
-  const parX = map(constrain(mouseX, 0, width), 0, width, -40, 40);
-  const parY = map(constrain(mouseY, 0, height), 0, height, -25, 25);
-  const eyeX = cos(camAngle) * 640 + parX;
-  const eyeZ = sin(camAngle) * 640;
-  const eyeY = -170 + sin(camAngle * 0.5) * 40 + parY;
-  camera(eyeX, eyeY, eyeZ, 0, 0, 0, 0, 1, 0);
+  const eyeX = camTargetX + camRadius * cos(camPhi) * cos(camTheta);
+  const eyeY = camTargetY + camRadius * sin(camPhi);
+  const eyeZ = camTargetZ + camRadius * cos(camPhi) * sin(camTheta);
+  camera(eyeX, eyeY, eyeZ, camTargetX, camTargetY, camTargetZ, 0, 1, 0);
 
   agents.forEach(a => {
     a.actualizarVisual(t, dtReal);
@@ -493,16 +572,19 @@ function draw() {
   dibujarSueloRejilla();
   actualizarYDibujarParticulas(dtReal);
 
+
+
   const ordenados = [...agents].sort((a, b) => {
     const da = (a.pos.x - eyeX) ** 2 + (a.pos.y - eyeY) ** 2 + (a.pos.z - eyeZ) ** 2;
     const db = (b.pos.x - eyeX) ** 2 + (b.pos.y - eyeY) ** 2 + (b.pos.z - eyeZ) ** 2;
     return db - da;
   });
-  
+
   ordenados.forEach(a => a.display(t));
 
   const cercano = agenteMasCercano(mouseX, mouseY);
-  cursor(cercano ? HAND : ARROW);
+  cursor(cercano ? CROSS : ARROW);
+
 }
 
 function agenteMasCercano(px, py) {
@@ -540,7 +622,7 @@ function mousePressed() {
 function mouseReleased() { terminarShock(); }
 
 function touchStarted() {
-  if (touches.length > 0 && !enZonaDeInterfaz(touches[0].y)) iniciarShock(touches[0].x, touches[0].y);
+  if (touches.length > 0 && !enZonaDeInterfaz(touches[0].y)) iniciarShock(touches.get(0).x, touches.get(0).y);
   return false;
 }
 

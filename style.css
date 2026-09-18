@@ -1,210 +1,384 @@
-:root{
-    --azul-abismo: #050a16;
-    --azul-profundo: #0a1830;
-    --cian-vivo: #4be8ff;
-    --cian-brillo: #d8fbff;
-    --vidrio: rgba(150, 220, 255, 0.10);
-    --vidrio-borde: rgba(200, 245, 255, 0.35);
-    --coral-shock: #ff9a66;
-  }
+:root {
+  --bryce-top: #a0a4a8;
+  --bryce-bot: #5b5e62;
+  --bryce-blue-light: #6a9cff;
+  --bryce-blue-dark: #12245a;
+  --win-text: #000000;
+}
 
-  *{ box-sizing: border-box; }
+* { box-sizing: border-box; }
 
-  html, body{
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: var(--azul-abismo);
-    font-family: 'Segoe UI', 'Century Gothic', Verdana, sans-serif;
-    color: var(--cian-brillo);
-    -webkit-user-select: none;
-    user-select: none;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #a3a3a3; /* El gris del viewport */
+  font-family: 'Tahoma', 'MS Sans Serif', Arial, sans-serif;
+  color: var(--win-text);
+  -webkit-user-select: none;
+  user-select: none;
+}
 
-  canvas{ display:block; touch-action: none; }
+canvas { 
+  display: block; 
+  touch-action: none; 
+  margin-top: 42px;
+  margin-left: 70px;
+  /* El viewport como si estuviera hundido en el plástico */
+  border-top: 2px solid #4a4a4a;
+  border-left: 2px solid #4a4a4a;
+  border-right: 2px solid #dfdfdf;
+  border-bottom: 2px solid #dfdfdf;
+}
 
-  /* ---------- Panel de control (capsula de vidrio) ---------- */
-  #panel{
-    position: fixed;
-    left: 50%;
-    bottom: 26px;
-    transform: translateX(-50%);
-    width: min(460px, 88vw);
-    padding: 16px 26px 14px;
-    border-radius: 22px;
-    background: linear-gradient(180deg, rgba(210,250,255,0.16), rgba(40,90,140,0.14) 55%, rgba(10,25,50,0.28));
-    border: 1px solid var(--vidrio-borde);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
-    box-shadow:
-      0 8px 32px rgba(0, 20, 40, 0.55),
-      0 0 40px rgba(80, 220, 255, 0.12),
-      inset 0 1px 0 rgba(255,255,255,0.35),
-      inset 0 -14px 22px -14px rgba(0,0,0,0.35);
-    z-index: 20;
-  }
+/* ---------- Clases Generales estilo Bryce ---------- */
+.retro-panel {
+  /* Gradiente metálico clásico de KPT/Bryce */
+  background: linear-gradient(180deg, var(--bryce-top) 0%, var(--bryce-bot) 100%);
+  border: 1px solid #333;
+  box-shadow: inset 1px 1px 2px rgba(255,255,255,0.6), 2px 2px 10px rgba(0,0,0,0.5);
+  position: fixed;
+  z-index: 20;
+  display: flex;
+}
 
-  #panel::before{
-    content: "";
-    position: absolute;
-    top: 6px; left: 14px; right: 14px;
-    height: 38%;
-    border-radius: 18px 18px 40px 40px / 18px 18px 60px 60px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0));
-    pointer-events: none;
-  }
+/* Falsas agarraderas metálicas */
+.drag-handle {
+  width: 8px;
+  background: repeating-linear-gradient(180deg, #fff 0, #fff 1px, transparent 1px, transparent 3px, #444 3px, #444 4px);
+  margin-right: 8px;
+  opacity: 0.6;
+}
+.drag-handle-h {
+  height: 8px;
+  width: 100%;
+  background: repeating-linear-gradient(90deg, #fff 0, #fff 1px, transparent 1px, transparent 3px, #444 3px, #444 4px);
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
 
-  .fila-superior{
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    margin-bottom: 8px;
-  }
+/* ---------- Panel Superior (Estante de creación) ---------- */
+#ui-top {
+  overflow: visible !important;
+}
 
-  #panel h1{
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    margin: 0;
-    color: var(--cian-brillo);
-    text-shadow: 0 0 12px rgba(120, 230, 255, 0.55);
-  }
+.tempo-popup {
+  display: none;
+  position: fixed; /* Saca el menú del flujo de la barra para que no se corte */
+  top: 48px;
+  left: 20px;
+  width: 160px;
+  background: #c0c0c0;
+  border-top: 2px solid #fff;
+  border-left: 2px solid #fff;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  box-shadow: 2px 4px 12px rgba(0,0,0,0.7);
+  padding: 10px;
+  z-index: 99999;
+  font-size: 11px;
+  color: #000;
+}
 
-  #kReadout{
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-    color: var(--cian-vivo);
-    text-shadow: 0 0 10px rgba(80, 230, 255, 0.7);
-  }
+.tempo-popup.activo {
+  display: block;
+}
 
-  input[type="range"]{
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 14px;
-    border-radius: 10px;
-    background: linear-gradient(180deg, rgba(5,15,30,0.85), rgba(15,45,75,0.85));
-    box-shadow: inset 0 2px 5px rgba(0,0,0,0.55), inset 0 -1px 0 rgba(255,255,255,0.08);
-    outline: none;
-    margin: 6px 0 2px;
-  }
+.tempo-popup label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: bold;
+}
 
-  input[type="range"]::-webkit-slider-thumb{
-    -webkit-appearance: none;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 32% 28%, #ffffff, #bdf4ff 30%, #35c9f0 62%, #0a6f96 100%);
-    border: 1px solid rgba(255,255,255,0.6);
-    box-shadow: 0 0 14px rgba(90, 225, 255, 0.85), 0 2px 4px rgba(0,0,0,0.4);
-    cursor: pointer;
-    margin-top: -6px;
-  }
+.tempo-popup input[type="range"] {
+  width: 100%;
+  margin: 0;
+}
 
-  input[type="range"]::-moz-range-thumb{
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 32% 28%, #ffffff, #bdf4ff 30%, #35c9f0 62%, #0a6f96 100%);
-    border: 1px solid rgba(255,255,255,0.6);
-    box-shadow: 0 0 14px rgba(90, 225, 255, 0.85);
-    cursor: pointer;
-  }
+.panel-label {
+  font-size: 11px;
+  font-weight: bold;
+  margin-right: 12px;
+  color: #222;
+  text-shadow: 1px 1px 0px rgba(255,255,255,0.5);
+}
 
-  input[type="range"]::-moz-range-track{
-    height: 14px;
-    border-radius: 10px;
-    background: linear-gradient(180deg, rgba(5,15,30,0.85), rgba(15,45,75,0.85));
-  }
+/* Botones de primitivas azules en 3D falso */
+#ui-top .retro-btn {
+  width: 30px;
+  height: 30px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, var(--bryce-blue-light), var(--bryce-blue-dark) 80%, #050a1a);
+  border: 1px solid #000;
+  box-shadow: 1px 3px 6px rgba(0,0,0,0.5), inset 1px 1px 3px rgba(255,255,255,0.5);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+}
 
-  #subfila{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 11px;
-    color: rgba(215, 245, 255, 0.75);
-    margin-top: 4px;
-  }
+#ui-top .retro-btn:active {
+  box-shadow: inset 2px 3px 6px rgba(0,0,0,0.8);
+  padding-top: 2px;
+  padding-left: 2px;
+}
 
-  #rBadge{
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: rgba(0,0,0,0.25);
-    border: 1px solid rgba(180,240,255,0.3);
-  }
+#ui-top #btnClear {
+  background: radial-gradient(circle at 35% 35%, #ff7a7a, #8c1d1d, #300909);
+}
 
-  #rBadge b{ color: var(--cian-brillo); }
+.separator {
+  width: 2px;
+  height: 80%;
+  background: #555;
+  border-right: 1px solid #ddd;
+  margin: 0 10px;
+}
 
-  #hint{
-    position: fixed;
-    right: 20px;
-    bottom: 26px;
-    max-width: 210px;
-    font-size: 11px;
-    line-height: 1.45;
-    color: rgba(200, 235, 250, 0.55);
-    text-align: right;
-    z-index: 20;
-  }
+/* ---------- Panel Izquierdo (Cámara y Navegación) ---------- */
+#ui-left {
+  top: 42px;
+  left: 0;
+  width: 70px;
+  height: calc(100% - 42px - 70px);
+  padding: 6px;
+  flex-direction: column;
+  align-items: center;
+  border-right: 2px solid #222;
+}
 
-  /* ---------- Overlay de inicio ---------- */
-  #inicio{
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: radial-gradient(circle at 50% 40%, #0d2340 0%, #050a16 75%);
-    z-index: 50;
-    transition: opacity 0.9s ease;
-  }
+/* El trackball gordo de plástico */
+#ui-left .trackball {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #e8e8e8, #888, #333);
+  border: 1px solid #111;
+  box-shadow: 2px 4px 8px rgba(0,0,0,0.6), inset -2px -2px 6px rgba(0,0,0,0.6);
+  font-size: 26px;
+  color: var(--bryce-blue-dark);
+  margin-bottom: 12px;
+  cursor: pointer;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 1px 1px 0px rgba(255,255,255,0.4);
+}
 
-  #tarjetaInicio{
-    width: min(420px, 86vw);
-    padding: 34px 32px 28px;
-    border-radius: 26px;
-    text-align: center;
-    background: linear-gradient(180deg, rgba(210,250,255,0.14), rgba(20,60,100,0.18));
-    border: 1px solid var(--vidrio-borde);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 10px 50px rgba(0,10,25,0.6), 0 0 60px rgba(70,210,255,0.15), inset 0 1px 0 rgba(255,255,255,0.3);
-    position: relative;
-  }
+#ui-left .trackball:active {
+  background: radial-gradient(circle at 70% 70%, #e8e8e8, #888, #333);
+  box-shadow: inset 2px 4px 8px rgba(0,0,0,0.8);
+}
 
-  #tarjetaInicio h2{
-    margin: 0 0 10px;
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--cian-brillo);
-    text-shadow: 0 0 18px rgba(110,225,255,0.6);
-  }
+/* Botoncitos rectangulares metálicos */
+#ui-left .icon-btn {
+  width: 38px;
+  height: 26px;
+  margin-bottom: 8px;
+  background: linear-gradient(180deg, #d4d4d4, #888);
+  border: 1px solid #222;
+  box-shadow: inset 1px 1px 1px #fff, 1px 2px 4px rgba(0,0,0,0.4);
+  font-weight: bold;
+  cursor: pointer;
+  appearance: none;
+}
 
-  #tarjetaInicio p{
-    margin: 0 0 24px;
-    font-size: 13px;
-    line-height: 1.6;
-    color: rgba(210,240,255,0.75);
-  }
+/* ---------- Estilos para los Menús Flotantes de Tempo ---------- */
+.body-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-right: 6px;
+}
 
-  #btnIniciar{
-    appearance: none;
-    border: 1px solid rgba(255,255,255,0.55);
-    padding: 13px 34px;
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: #04283a;
-    background: linear-gradient(180deg, #f2ffff, #a7ecff 42%, #33c3ef 100%);
-    box-shadow: 0 4px 16px rgba(60,210,255,0.5), inset 0 1px 0 rgba(255,255,255,0.9);
-    cursor: pointer;
-  }
+.body-btn {
+  width: 48px;
+  height: 30px;
+  background: linear-gradient(180deg, #d4d4d4, #888);
+  border: 1px solid #111;
+  box-shadow: inset 1px 1px 1px #fff, 1px 2px 4px rgba(0,0,0,0.4);
+  font-size: 11px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 4px;
+}
 
-  #btnIniciar:active{ transform: translateY(1px); }
+.body-btn:active {
+  background: linear-gradient(180deg, #888, #d4d4d4);
+  box-shadow: inset 1px 2px 4px rgba(0,0,0,0.6);
+}
 
-  #inicio.oculto{
-    opacity: 0;
-    pointer-events: none;
-  }
+.color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #000;
+  display: inline-block;
+}
+
+/* El menú flotante oculto por defecto */
+.tempo-popup {
+  display: none;
+  position: absolute;
+  top: 36px;
+  left: 0;
+  width: 140px;
+  background: #c0c0c0;
+  border-top: 2px solid #fff;
+  border-left: 2px solid #fff;
+  border-right: 2px solid #404040;
+  border-bottom: 2px solid #404040;
+  box-shadow: 2px 4px 10px rgba(0,0,0,0.5);
+  padding: 8px;
+  z-index: 100;
+  font-size: 10px;
+  color: #000;
+}
+
+.tempo-popup.activo {
+  display: block;
+}
+
+.tempo-popup label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+.tempo-popup input[type="range"] {
+  width: 100%;
+  margin: 4px 0 0 0;
+}
+
+/* ---------- Panel Inferior (Timeline / Acoplamiento) ---------- */
+#panel {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 70px;
+  flex-direction: column;
+  padding: 4px 14px;
+  border-top: 2px solid #222;
+  background: linear-gradient(180deg, #7b838c, #3a3e42);
+}
+
+.fila-superior {
+  color: #fff;
+  padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-shadow: 1px 1px 2px #000;
+}
+
+#panel h1, #kReadout { font-size: 11px; margin: 0; }
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 8px 0;
+  background: #222;
+  border-bottom: 1px solid #888;
+  border-right: 1px solid #888;
+  box-shadow: inset 1px 1px 3px #000;
+  outline: none;
+  border-radius: 3px;
+}
+
+/* Thumb del slider como un switch metálico */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 24px;
+  background: linear-gradient(90deg, #aaa, #eee 30%, #888 70%, #555);
+  border: 1px solid #111;
+  box-shadow: 1px 2px 4px rgba(0,0,0,0.6);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+#subfila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #ccc;
+  text-shadow: 1px 1px 1px #000;
+}
+
+#rBadge {
+  padding: 2px 8px;
+  background: #111;
+  border-top: 1px solid #000;
+  border-left: 1px solid #000;
+  border-right: 1px solid #666;
+  border-bottom: 1px solid #666;
+  box-shadow: inset 1px 1px 4px #000;
+  border-radius: 2px;
+}
+
+#rBadge b { color: #fff; }
+
+/* ---------- Overlay de inicio ---------- */
+#inicio {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 50;
+  transition: opacity 0.2s ease;
+}
+
+#tarjetaInicio {
+  width: min(420px, 86vw);
+  padding: 6px;
+  background: linear-gradient(180deg, var(--bryce-top), var(--bryce-bot));
+  border: 1px solid #222;
+  box-shadow: inset 1px 1px 2px rgba(255,255,255,0.6), 0px 10px 30px rgba(0,0,0,0.8);
+}
+
+#tarjetaInicio h2 {
+  background: linear-gradient(90deg, var(--bryce-blue-dark), var(--bryce-blue-light));
+  color: white;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 14px;
+  text-align: left;
+  border: 1px solid #111;
+  text-shadow: 1px 1px 2px #000;
+}
+
+#tarjetaInicio p { margin: 20px; font-size: 12px; line-height: 1.6; }
+
+#btnIniciar {
+  appearance: none;
+  background: linear-gradient(180deg, #d4d4d4, #888);
+  border: 1px solid #222;
+  box-shadow: inset 1px 1px 1px #fff, 1px 2px 4px rgba(0,0,0,0.4);
+  padding: 8px 24px;
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--win-text);
+  font-family: inherit;
+  margin-bottom: 20px;
+  cursor: pointer;
+}
+
+#btnIniciar:active {
+  background: linear-gradient(180deg, #888, #d4d4d4);
+  box-shadow: inset 1px 2px 4px rgba(0,0,0,0.6);
+}
+
+#inicio.oculto { opacity: 0; pointer-events: none; }
